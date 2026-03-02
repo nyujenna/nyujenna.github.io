@@ -1,0 +1,3 @@
+trial_id,ref_video,model_a_video,model_b_video
+trial_001,refs/ref_001.mp4,model_a/a_001.mp4,model_b/b_001.mp4
+trial_002,refs/ref_002.mp4,model_a/a_002.mp4,model_b/b_002.mp4

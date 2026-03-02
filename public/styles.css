@@ -1,0 +1,146 @@
+:root {
+  color-scheme: light;
+  --bg: #f4f5f1;
+  --panel: #ffffff;
+  --text: #151515;
+  --muted: #5d6165;
+  --accent: #0b6d61;
+  --border: #d5dadd;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  background: linear-gradient(160deg, #f6f5f2 0%, #edf2f7 100%);
+  color: var(--text);
+  min-height: 100vh;
+}
+
+.app {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+h1 {
+  margin: 0 0 14px;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.hidden {
+  display: none;
+}
+
+.visible {
+  display: block;
+}
+
+label {
+  display: block;
+  margin-bottom: 10px;
+}
+
+input {
+  width: 100%;
+  padding: 8px;
+  margin-top: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+button {
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: 6px;
+  padding: 9px 14px;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.hint {
+  color: var(--muted);
+  margin-top: 10px;
+}
+
+#status-line {
+  margin-bottom: 10px;
+  color: var(--muted);
+}
+
+.video-label {
+  font-size: 14px;
+  color: #2c2f33;
+  margin-bottom: 6px;
+}
+
+.gt-wrap video {
+  width: 100%;
+  max-height: 36vh;
+  background: #000;
+  border-radius: 8px;
+}
+
+.comparison-grid {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.video-cell video {
+  width: 100%;
+  max-height: 30vh;
+  background: #000;
+  border-radius: 8px;
+}
+
+.overlay {
+  margin-top: 12px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  background: #fbfcfd;
+}
+
+.overlay p {
+  margin: 0;
+  font-size: 17px;
+}
+
+.overlay button {
+  margin-top: 10px;
+}
+
+.message {
+  margin-top: 12px;
+  border-radius: 8px;
+  padding: 10px;
+  background: #f1f6ff;
+  border: 1px solid #c7d9f9;
+}
+
+@media (max-width: 900px) {
+  .comparison-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .gt-wrap video,
+  .video-cell video {
+    max-height: 40vh;
+  }
+}

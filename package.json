@@ -1,0 +1,9 @@
+{
+  "name": "twoafc-video-study",
+  "version": "1.0.0",
+  "description": "Local 2AFC video user study app",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
