@@ -86,6 +86,19 @@ function findFirstMp4(folder) {
   return null;
 }
 
+function findBaseGtMp4(baseDir) {
+  if (!fs.existsSync(baseDir)) return null;
+  const entries = fs.readdirSync(baseDir, { withFileTypes: true });
+  for (const ent of entries) {
+    if (!ent.isFile()) continue;
+    const name = ent.name.toLowerCase();
+    if (name.endsWith('.mp4') && name.startsWith('gt_')) {
+      return path.join(baseDir, ent.name);
+    }
+  }
+  return null;
+}
+
 function findFirstMp4InSubfolder(folder, subfolderName) {
   const target = path.join(folder, subfolderName);
   return findFirstMp4(target);
@@ -149,7 +162,12 @@ function discoverBaseVideoCandidates() {
       continue;
     }
 
-    const gtAbs = findFirstMp4InSubfolder(tppDir, 'gt_only');
+    // New format: GT is directly in base video dir as gt_*.mp4.
+    // Backward-compatible fallback: GT may be under a model/gt_only subfolder.
+    const gtAbs =
+      findBaseGtMp4(baseDir) ||
+      findFirstMp4InSubfolder(tppDir, 'gt_only') ||
+      findFirstMp4InSubfolder(unetDir, 'gt_only');
     const tppAbs = findFirstMp4(tppDir);
     const diffAbs = findFirstMp4(diffDir);
     const unetAbsList = listMp4s(unetDir);

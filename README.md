@@ -6,12 +6,13 @@ Local JavaScript app for running 2AFC user studies with simultaneous playback:
 - Participant chooses preference with `1` (left) or `2` (right)
 
 ## Current Trial Logic
-- Video source root: `out/`
+- Video source root: `out/` (or `STUDY_VIDEO_ROOT`)
 - A valid base video must contain:
-  - `tpp*` folder with a `gt_only/*.mp4` (GT)
+  - base-level `gt_*.mp4` (preferred GT location)
   - `tpp*` prediction `.mp4`
   - `diffeye*` prediction `.mp4`
   - `unet*` prediction `.mp4`
+- Backward compatibility: if base GT is missing, GT falls back to `tpp*/gt_only/*.mp4` or `unet*/gt_only/*.mp4`.
 - The app builds trials as:
   - 8 base videos
   - 2 comparisons each (`unet vs tpp`, `unet vs diffeye`)

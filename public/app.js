@@ -152,14 +152,15 @@ async function verifyAllSourcesOrThrow(trial) {
   await verifyVideoSource(trial.rightUrl, 'RIGHT');
 }
 
-function allVideosEnded() {
-  return endedFlags.gt && endedFlags.left && endedFlags.right;
-}
-
 function handleVideoEnded(type) {
   endedFlags[type] = true;
 
-  if (state === AppState.PLAYING && allVideosEnded()) {
+  if (state === AppState.PLAYING) {
+    // New behavior: as soon as any video ends, freeze all and ask for choice.
+    dom.gtVideo.pause();
+    dom.leftVideo.pause();
+    dom.rightVideo.pause();
+
     setState(AppState.CHOICE);
     choiceStartMs = performance.now();
     showOverlay('Choose preference now: press 1 for LEFT or 2 for RIGHT.');
