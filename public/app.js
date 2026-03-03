@@ -13,14 +13,13 @@ const dom = {
   userIdInput: document.getElementById('user-id-input'),
   startButton: document.getElementById('start-button'),
   statusLine: document.getElementById('status-line'),
-  gtVideo: document.getElementById('gt-video'),
-  gtSource: document.getElementById('gt-source'),
-  leftVideo: document.getElementById('left-video'),
-  leftSource: document.getElementById('left-source'),
-  rightVideo: document.getElementById('right-video'),
-  rightSource: document.getElementById('right-source'),
-  leftLabel: document.getElementById('left-label'),
-  rightLabel: document.getElementById('right-label'),
+  trialVideo: document.getElementById('trial-video'),
+  trialSource: document.getElementById('trial-source'),
+  choiceButtons: document.getElementById('choice-buttons'),
+  cyanButton: document.getElementById('cyan-button'),
+  redButton: document.getElementById('red-button'),
+  submitChoiceButton: document.getElementById('submit-choice-button'),
+  choicePreview: document.getElementById('choice-preview'),
   overlay: document.getElementById('overlay'),
   overlayText: document.getElementById('overlay-text'),
   overlayAction: document.getElementById('overlay-action'),
@@ -31,11 +30,12 @@ const dom = {
 let state = AppState.START_SCREEN;
 let session = null;
 let currentTrial = null;
-let completedTrials = 0;
 let choiceStartMs = null;
-
 let autoplayBlocked = false;
-let endedFlags = { gt: false, left: false, right: false };
+let hasCompletedFirstWatch = false;
+let maxWatchedTime = 0;
+let pendingChoiceColor = null;
+let submittedChoiceColor = null;
 
 function setState(next) {
   state = next;
@@ -63,9 +63,23 @@ function clearMessage() {
   dom.messageBar.classList.add('hidden');
 }
 
-function showOverlay(text) {
+function showOverlay(text, showAction = false, actionLabel = 'Play video') {
   dom.overlayText.textContent = text;
   dom.overlay.classList.remove('hidden');
+  if (showAction) {
+    dom.overlayAction.textContent = actionLabel;
+    dom.overlayAction.classList.remove('hidden');
+    dom.overlayAction.disabled = false;
+  } else {
+    dom.overlayAction.classList.add('hidden');
+  }
+}
+
+function showSavedChoiceOverlay(loggedChoiceColor) {
+  const cls = loggedChoiceColor === 'cyan' ? 'saved-choice saved-choice--cyan' : 'saved-choice saved-choice--red';
+  dom.overlayText.innerHTML = `Saved choice: <span class="${cls}">${loggedChoiceColor.toUpperCase()}</span>. Press Space for next trial.`;
+  dom.overlay.classList.remove('hidden');
+  dom.overlayAction.classList.add('hidden');
 }
 
 function hideOverlay() {
@@ -77,6 +91,42 @@ function hideOverlay() {
 
 function setStatus(text) {
   dom.statusLine.textContent = text;
+}
+
+function setChoiceVisibility(isVisible) {
+  if (isVisible) {
+    dom.choiceButtons.classList.remove('hidden');
+    dom.choicePreview.classList.remove('hidden');
+  } else {
+    dom.choiceButtons.classList.add('hidden');
+    dom.choicePreview.classList.add('hidden');
+  }
+}
+
+function setPendingChoice(color) {
+  pendingChoiceColor = color;
+  dom.submitChoiceButton.disabled = !pendingChoiceColor;
+  dom.cyanButton.classList.toggle('btn-selected', pendingChoiceColor === 'cyan');
+  dom.redButton.classList.toggle('btn-selected', pendingChoiceColor === 'red');
+
+  if (!pendingChoiceColor) {
+    dom.choicePreview.textContent = 'My choice: none';
+    dom.choicePreview.classList.remove('choice-preview--cyan', 'choice-preview--red');
+    return;
+  }
+
+  const upper = pendingChoiceColor.toUpperCase();
+  dom.choicePreview.textContent = `My choice: ${upper}`;
+  dom.choicePreview.classList.toggle('choice-preview--cyan', pendingChoiceColor === 'cyan');
+  dom.choicePreview.classList.toggle('choice-preview--red', pendingChoiceColor === 'red');
+}
+
+function setSubmitButtonLabel() {
+  if (state === AppState.INTER_TRIAL) {
+    dom.submitChoiceButton.textContent = 'Update Logged Choice (Enter)';
+    return;
+  }
+  dom.submitChoiceButton.textContent = 'Submit Choice (Enter)';
 }
 
 function showStudyScreen() {
@@ -106,64 +156,19 @@ async function apiJson(url, options = {}) {
   return data;
 }
 
-function resetEndedFlags() {
-  endedFlags = { gt: false, left: false, right: false };
+function setVideoSource(url) {
+  dom.trialSource.src = url;
+  dom.trialVideo.load();
 }
 
-function setAllSources(gtUrl, leftUrl, rightUrl) {
-  dom.gtSource.src = gtUrl;
-  dom.leftSource.src = leftUrl;
-  dom.rightSource.src = rightUrl;
-
-  dom.gtVideo.load();
-  dom.leftVideo.load();
-  dom.rightVideo.load();
-}
-
-async function playAllThree() {
-  const plays = [dom.gtVideo.play(), dom.leftVideo.play(), dom.rightVideo.play()];
-  const results = await Promise.allSettled(plays);
-  autoplayBlocked = results.some((r) => r.status === 'rejected');
-  if (autoplayBlocked) {
-    showOverlay('Autoplay blocked. Press Space to start all videos.');
-    dom.overlayAction.classList.remove('hidden');
-  }
-}
-
-async function verifyVideoSource(url, label) {
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: { Range: 'bytes=0-0' },
-  });
-
-  if (!response.ok && response.status !== 206) {
-    throw new Error(`${label}: HTTP ${response.status} for ${url}`);
-  }
-
-  const contentType = response.headers.get('content-type') || '';
-  if (!contentType.startsWith('video/')) {
-    throw new Error(`${label}: non-video content-type "${contentType}" for ${url}`);
-  }
-}
-
-async function verifyAllSourcesOrThrow(trial) {
-  await verifyVideoSource(trial.gtUrl, 'GT');
-  await verifyVideoSource(trial.leftUrl, 'LEFT');
-  await verifyVideoSource(trial.rightUrl, 'RIGHT');
-}
-
-function handleVideoEnded(type) {
-  endedFlags[type] = true;
-
-  if (state === AppState.PLAYING) {
-    // New behavior: as soon as any video ends, freeze all and ask for choice.
-    dom.gtVideo.pause();
-    dom.leftVideo.pause();
-    dom.rightVideo.pause();
-
-    setState(AppState.CHOICE);
-    choiceStartMs = performance.now();
-    showOverlay('Choose preference now: press 1 for LEFT or 2 for RIGHT.');
+async function playVideo() {
+  try {
+    await dom.trialVideo.play();
+    autoplayBlocked = false;
+    hideOverlay();
+  } catch (_err) {
+    autoplayBlocked = true;
+    showOverlay('Autoplay blocked. Press Space or click button to play.', true, 'Play video');
   }
 }
 
@@ -182,31 +187,25 @@ async function loadNextTrial() {
   }
 
   currentTrial = data;
-  resetEndedFlags();
-  hideOverlay();
-
-  dom.leftLabel.textContent = `Left (key 1): ${currentTrial.leftSource}`;
-  dom.rightLabel.textContent = `Right (key 2): ${currentTrial.rightSource}`;
-
-  setStatus(`Trial ${currentTrial.trialIndex + 1}/${currentTrial.totalTrials} | Base video: ${currentTrial.baseVideoId}`);
-  try {
-    await verifyAllSourcesOrThrow(currentTrial);
-  } catch (err) {
-    showMessage(`Video source check failed: ${err.message}`, true);
-    return;
-  }
-
-  setAllSources(currentTrial.gtUrl, currentTrial.leftUrl, currentTrial.rightUrl);
-
   setState(AppState.PLAYING);
-  await playAllThree();
+  hasCompletedFirstWatch = false;
+  maxWatchedTime = 0;
+  pendingChoiceColor = null;
+  submittedChoiceColor = null;
+  dom.trialVideo.loop = false;
+  dom.trialVideo.controls = false;
+  setChoiceVisibility(false);
+  setPendingChoice(null);
+  setSubmitButtonLabel();
+  setStatus(`Trial ${currentTrial.trialIndex + 1}/${currentTrial.totalTrials} | ${currentTrial.baseVideoId}`);
+  setVideoSource(currentTrial.videoUrl);
+  await playVideo();
 }
 
 async function startSession() {
   clearMessage();
 
   const userId = dom.userIdInput.value.trim();
-
   if (!userId) {
     showMessage('Please enter User ID.', true);
     return;
@@ -216,16 +215,12 @@ async function startSession() {
   try {
     const data = await apiJson('/api/session/start', {
       method: 'POST',
-      body: JSON.stringify({
-        userId,
-      }),
+      body: JSON.stringify({ userId }),
     });
 
     session = data;
-    completedTrials = 0;
-
     showStudyScreen();
-    showMessage(`Session started. ${data.totalTrials} trials loaded from ${data.baseVideosUsed} base videos.`);
+    showMessage(`Session started. ${data.totalTrials} trials loaded.`);
     await loadNextTrial();
   } catch (err) {
     showMessage(`Failed to start session: ${err.message}`, true);
@@ -234,27 +229,73 @@ async function startSession() {
   }
 }
 
-async function submitChoice(choice) {
-  if (state !== AppState.CHOICE || !currentTrial) {
+async function submitChoice(choiceColor) {
+  if ((state !== AppState.CHOICE && state !== AppState.INTER_TRIAL) || !currentTrial) {
     return;
   }
 
   try {
     const rtMs = Math.max(0, performance.now() - choiceStartMs);
-    await apiJson(`/api/session/${session.sessionId}/answer`, {
+    const result = await apiJson(`/api/session/${session.sessionId}/answer`, {
       method: 'POST',
       body: JSON.stringify({
         trialId: currentTrial.trialId,
-        choice,
+        choiceColor,
         rtMs,
       }),
     });
 
-    completedTrials += 1;
     setState(AppState.INTER_TRIAL);
-    showOverlay(`Saved: ${choice === 1 ? 'LEFT' : 'RIGHT'}. Press Space for next trial.`);
+    setSubmitButtonLabel();
+    submittedChoiceColor = result.choiceColor || choiceColor;
+    pendingChoiceColor = submittedChoiceColor;
+    setChoiceVisibility(true);
+    setPendingChoice(submittedChoiceColor);
+    showOverlay('Choice saved. You can still change it and press Enter to update, or press Space for next trial.');
   } catch (err) {
     showMessage(`Failed to save answer: ${err.message}`, true);
+  }
+}
+
+async function submitPendingChoice() {
+  if (!pendingChoiceColor) {
+    showMessage('Pick cyan or red first, then submit.', true);
+    return;
+  }
+  if (state === AppState.CHOICE) {
+    await submitChoice(pendingChoiceColor);
+    return;
+  }
+  if (state === AppState.INTER_TRIAL && currentTrial) {
+    try {
+      const result = await apiJson(`/api/session/${session.sessionId}/revise`, {
+        method: 'POST',
+        body: JSON.stringify({
+          choiceColor: pendingChoiceColor,
+        }),
+      });
+      submittedChoiceColor = result.choiceColor || pendingChoiceColor;
+      setPendingChoice(submittedChoiceColor);
+      showSavedChoiceOverlay(submittedChoiceColor);
+    } catch (err) {
+      showMessage(`Failed to revise answer: ${err.message}`, true);
+    }
+  }
+}
+
+async function tryResumePlaybackFromGesture() {
+  if (state !== AppState.PLAYING || !autoplayBlocked) {
+    return;
+  }
+  dom.overlayAction.disabled = true;
+  try {
+    await dom.trialVideo.play();
+    autoplayBlocked = false;
+    hideOverlay();
+  } catch (err) {
+    showOverlay(`Playback failed: ${err?.message || 'Unknown error'}`, true, 'Play video');
+  } finally {
+    dom.overlayAction.disabled = false;
   }
 }
 
@@ -270,44 +311,80 @@ async function handleSpaceKey() {
 }
 
 function isSpaceKey(event) {
-  return (
-    event.code === 'Space' ||
-    event.key === ' ' ||
-    event.key === 'Spacebar'
-  );
+  return event.code === 'Space' || event.key === ' ' || event.key === 'Spacebar';
+}
+
+function handleVideoEnded() {
+  if (state !== AppState.PLAYING && state !== AppState.CHOICE) {
+    return;
+  }
+
+  if (!hasCompletedFirstWatch) {
+    hasCompletedFirstWatch = true;
+    dom.trialVideo.controls = true;
+    dom.trialVideo.loop = true;
+    setState(AppState.CHOICE);
+    setSubmitButtonLabel();
+    choiceStartMs = performance.now();
+    setChoiceVisibility(true);
+    setPendingChoice(null);
+    showOverlay('Video complete. Replay started. You can scrub/replay, then choose Cyan (C) or Red (R).');
+    dom.trialVideo.currentTime = 0;
+    dom.trialVideo.play().catch(() => {});
+  }
 }
 
 dom.startButton.addEventListener('click', () => {
   startSession();
 });
 
-dom.gtVideo.addEventListener('ended', () => handleVideoEnded('gt'));
-dom.leftVideo.addEventListener('ended', () => handleVideoEnded('left'));
-dom.rightVideo.addEventListener('ended', () => handleVideoEnded('right'));
+dom.trialVideo.addEventListener('ended', () => {
+  handleVideoEnded();
+});
 
-async function tryResumePlaybackFromGesture() {
-  if (state === AppState.PLAYING && autoplayBlocked) {
-    dom.overlayAction.disabled = true;
-    const attempts = await Promise.allSettled([
-      dom.gtVideo.play(),
-      dom.leftVideo.play(),
-      dom.rightVideo.play(),
-    ]);
-
-    const failed = attempts.filter((r) => r.status === 'rejected');
-    autoplayBlocked = failed.length > 0;
-
-    if (autoplayBlocked) {
-      const reason = failed[0].reason?.message || 'Unknown play() error';
-      showOverlay(`Playback blocked or unsupported. Click controls or check source format. Error: ${reason}`);
-      dom.overlayAction.classList.remove('hidden');
-      dom.overlayAction.disabled = false;
-      return;
-    }
-
-    hideOverlay();
+dom.trialVideo.addEventListener('timeupdate', () => {
+  if (state === AppState.PLAYING && !hasCompletedFirstWatch) {
+    maxWatchedTime = Math.max(maxWatchedTime, dom.trialVideo.currentTime || 0);
   }
-}
+});
+
+dom.trialVideo.addEventListener('seeking', () => {
+  if (state === AppState.PLAYING && !hasCompletedFirstWatch) {
+    const target = dom.trialVideo.currentTime || 0;
+    const allowed = maxWatchedTime + 0.15;
+    if (target > allowed) {
+      dom.trialVideo.currentTime = maxWatchedTime;
+    }
+  }
+});
+
+dom.trialVideo.addEventListener('pause', () => {
+  if (state === AppState.PLAYING && !hasCompletedFirstWatch && !dom.trialVideo.ended) {
+    dom.trialVideo.play().catch(() => {});
+  }
+});
+
+dom.trialVideo.addEventListener('error', () => {
+  const src = dom.trialVideo.currentSrc || '(no source)';
+  const code = dom.trialVideo.error?.code || 'unknown';
+  showMessage(`Video error: code ${code}, src ${src}`, true);
+});
+
+dom.cyanButton.addEventListener('click', () => {
+  setPendingChoice('cyan');
+});
+
+dom.redButton.addEventListener('click', () => {
+  setPendingChoice('red');
+});
+
+dom.submitChoiceButton.addEventListener('click', () => {
+  submitPendingChoice();
+});
+
+dom.overlayAction.addEventListener('click', () => {
+  tryResumePlaybackFromGesture();
+});
 
 document.addEventListener('keydown', (event) => {
   if (state === AppState.COMPLETE) return;
@@ -318,30 +395,21 @@ document.addEventListener('keydown', (event) => {
     return;
   }
 
-  if (state === AppState.CHOICE && (event.key === '1' || event.key === '2')) {
+  const k = String(event.key || '').toLowerCase();
+  if ((state === AppState.CHOICE || state === AppState.INTER_TRIAL) && k === 'c') {
     event.preventDefault();
-    submitChoice(Number(event.key));
+    setPendingChoice('cyan');
+    return;
+  }
+  if ((state === AppState.CHOICE || state === AppState.INTER_TRIAL) && k === 'r') {
+    event.preventDefault();
+    setPendingChoice('red');
+    return;
+  }
+  if ((state === AppState.CHOICE || state === AppState.INTER_TRIAL) && event.key === 'Enter') {
+    event.preventDefault();
+    submitPendingChoice();
   }
 });
-
-dom.overlay.addEventListener('click', () => {
-  tryResumePlaybackFromGesture();
-});
-
-dom.overlayAction.addEventListener('click', () => {
-  tryResumePlaybackFromGesture();
-});
-
-function attachVideoError(videoEl, labelFn) {
-  videoEl.addEventListener('error', () => {
-    const source = videoEl.currentSrc || '(no source)';
-    const code = videoEl.error?.code || 'unknown';
-    showMessage(`Video error (${labelFn()}): code ${code}, src ${source}`, true);
-  });
-}
-
-attachVideoError(dom.gtVideo, () => 'GT');
-attachVideoError(dom.leftVideo, () => currentTrial?.leftSource || 'left');
-attachVideoError(dom.rightVideo, () => currentTrial?.rightSource || 'right');
 
 setStatus('Ready. Start a session to begin.');

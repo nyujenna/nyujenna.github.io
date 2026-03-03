@@ -8,12 +8,27 @@ const PORT = Number(process.env.PORT || 3000);
 
 const DATA_ROOT = path.resolve(__dirname, 'data');
 const LOGS_ROOT = path.resolve(DATA_ROOT, 'logs');
-const OUT_ROOT = path.resolve(__dirname, process.env.STUDY_VIDEO_ROOT || 'out');
+const OUT_ROOT = path.resolve(__dirname, process.env.STUDY_VIDEO_ROOT || 'out_triplets');
 const PUBLIC_ROOT = path.resolve(__dirname, 'public');
 
 fs.mkdirSync(LOGS_ROOT, { recursive: true });
 
 const sessions = new Map();
+const LOG_HEADER = [
+  'session_id',
+  'user_id',
+  'trial_index',
+  'trial_id',
+  'base_video_id',
+  'video_path',
+  'unet_label',
+  'unet_color',
+  'compare_label',
+  'compare_color',
+  'choice_color',
+  'rt_ms',
+  'answered_at_iso',
+];
 
 function nowTimestampForFile() {
   const d = new Date();
@@ -35,6 +50,33 @@ function toCsvCell(v) {
 function appendCsvLine(filePath, values) {
   const line = values.map(toCsvCell).join(',') + '\n';
   fs.appendFileSync(filePath, line, 'utf8');
+}
+
+function buildCsvLine(values) {
+  return values.map(toCsvCell).join(',') + '\n';
+}
+
+function rewriteSessionLogFile(session) {
+  let csv = buildCsvLine(LOG_HEADER);
+  const sorted = Array.from(session.responses.values()).sort((a, b) => a.trial_index - b.trial_index);
+  for (const row of sorted) {
+    csv += buildCsvLine([
+      row.session_id,
+      row.user_id,
+      row.trial_index,
+      row.trial_id,
+      row.base_video_id,
+      row.video_path,
+      row.unet_label,
+      row.unet_color,
+      row.compare_label,
+      row.compare_color,
+      row.choice_color,
+      row.rt_ms,
+      row.answered_at_iso,
+    ]);
+  }
+  fs.writeFileSync(session.logFile, csv, 'utf8');
 }
 
 function assertSafeRelativePath(relPath, fieldName) {
@@ -75,43 +117,6 @@ function shuffleInPlace(items) {
   }
 }
 
-function findFirstMp4(folder) {
-  if (!fs.existsSync(folder)) return null;
-  const entries = fs.readdirSync(folder, { withFileTypes: true });
-  for (const ent of entries) {
-    if (ent.isFile() && ent.name.toLowerCase().endsWith('.mp4')) {
-      return path.join(folder, ent.name);
-    }
-  }
-  return null;
-}
-
-function findBaseGtMp4(baseDir) {
-  if (!fs.existsSync(baseDir)) return null;
-  const entries = fs.readdirSync(baseDir, { withFileTypes: true });
-  for (const ent of entries) {
-    if (!ent.isFile()) continue;
-    const name = ent.name.toLowerCase();
-    if (name.endsWith('.mp4') && name.startsWith('gt_')) {
-      return path.join(baseDir, ent.name);
-    }
-  }
-  return null;
-}
-
-function findFirstMp4InSubfolder(folder, subfolderName) {
-  const target = path.join(folder, subfolderName);
-  return findFirstMp4(target);
-}
-
-function listMp4s(folder) {
-  if (!fs.existsSync(folder)) return [];
-  const entries = fs.readdirSync(folder, { withFileTypes: true });
-  return entries
-    .filter((ent) => ent.isFile() && ent.name.toLowerCase().endsWith('.mp4'))
-    .map((ent) => path.join(folder, ent.name));
-}
-
 function relFromOut(absPath) {
   const rel = path.relative(OUT_ROOT, absPath);
   if (rel.startsWith('..') || path.isAbsolute(rel)) {
@@ -120,120 +125,68 @@ function relFromOut(absPath) {
   return rel;
 }
 
-function normalizeModelDirName(dirName) {
-  if (dirName.startsWith('tppgaze')) return 'tpp';
-  if (dirName.startsWith('diffeye')) return 'diffeye';
-  if (dirName.startsWith('unet')) return 'unet';
-  return null;
+function parseTripletMetaFromFilename(fileName) {
+  const noExt = fileName.replace(/\.mp4$/i, '');
+  const match = noExt.match(/__u_(.+)_(cyan|red)__c_(.+)_(cyan|red)$/i);
+  if (!match) {
+    return {
+      unetLabel: '',
+      unetColor: '',
+      compareLabel: '',
+      compareColor: '',
+    };
+  }
+  return {
+    unetLabel: match[1],
+    unetColor: match[2].toLowerCase(),
+    compareLabel: match[3],
+    compareColor: match[4].toLowerCase(),
+  };
 }
 
-function discoverBaseVideoCandidates() {
+function discoverTripletTrials() {
   if (!fs.existsSync(OUT_ROOT)) {
-    throw new Error(`Missing out folder: ${OUT_ROOT}`);
+    throw new Error(`Missing video root folder: ${OUT_ROOT}`);
   }
 
-  const videoDirs = fs
+  const baseDirs = fs
     .readdirSync(OUT_ROOT, { withFileTypes: true })
     .filter((ent) => ent.isDirectory())
     .map((ent) => ent.name)
     .sort((a, b) => a.localeCompare(b));
 
-  const candidates = [];
-
-  for (const videoId of videoDirs) {
-    const baseDir = path.join(OUT_ROOT, videoId);
-    const modelDirs = fs
-      .readdirSync(baseDir, { withFileTypes: true })
-      .filter((ent) => ent.isDirectory())
-      .map((ent) => ent.name);
-
-    let tppDir = null;
-    let diffDir = null;
-    let unetDir = null;
-
-    for (const dirName of modelDirs) {
-      const norm = normalizeModelDirName(dirName);
-      if (norm === 'tpp') tppDir = path.join(baseDir, dirName);
-      if (norm === 'diffeye') diffDir = path.join(baseDir, dirName);
-      if (norm === 'unet') unetDir = path.join(baseDir, dirName);
-    }
-
-    if (!tppDir || !diffDir || !unetDir) {
-      continue;
-    }
-
-    // New format: GT is directly in base video dir as gt_*.mp4.
-    // Backward-compatible fallback: GT may be under a model/gt_only subfolder.
-    const gtAbs =
-      findBaseGtMp4(baseDir) ||
-      findFirstMp4InSubfolder(tppDir, 'gt_only') ||
-      findFirstMp4InSubfolder(unetDir, 'gt_only');
-    const tppAbs = findFirstMp4(tppDir);
-    const diffAbs = findFirstMp4(diffDir);
-    const unetAbsList = listMp4s(unetDir);
-
-    if (!gtAbs || !tppAbs || !diffAbs || unetAbsList.length === 0) {
-      continue;
-    }
-
-    for (let i = 0; i < unetAbsList.length; i += 1) {
-      const unetAbs = unetAbsList[i];
-      candidates.push({
-        videoId,
-        variantIndex: i,
-        gtRel: relFromOut(gtAbs),
-        tppRel: relFromOut(tppAbs),
-        diffRel: relFromOut(diffAbs),
-        unetRel: relFromOut(unetAbs),
-      });
-    }
-  }
-
-  return candidates;
-}
-
-function buildTrialsFromOut() {
-  let candidates = discoverBaseVideoCandidates();
-  if (candidates.length === 0) {
-    throw new Error('No valid video bundles found in out/. Need GT+TPP+DiffEye+UNet.');
-  }
-
-  // Need exactly 8 base entries for 16 total comparison trials.
-  // If more than 8 candidates, keep first 8 in deterministic order.
-  // If fewer than 8, fail clearly so dataset can be fixed.
-  candidates.sort((a, b) => {
-    if (a.videoId !== b.videoId) return a.videoId.localeCompare(b.videoId);
-    return a.variantIndex - b.variantIndex;
-  });
-
-  if (candidates.length < 8) {
-    throw new Error(`Need at least 8 valid base videos; found ${candidates.length}.`);
-  }
-
-  const baseEight = candidates.slice(0, 8);
-
   const trials = [];
-  for (const base of baseEight) {
-    const comparisons = [
-      { opponentModel: 'tpp', opponentRel: base.tppRel },
-      { opponentModel: 'diffeye', opponentRel: base.diffRel },
-    ];
 
-    for (const cmp of comparisons) {
-      const unetOnLeft = Math.random() < 0.5;
+  for (const baseVideoId of baseDirs) {
+    const tripletsDir = path.join(OUT_ROOT, baseVideoId, 'triplets');
+    if (!fs.existsSync(tripletsDir) || !fs.statSync(tripletsDir).isDirectory()) {
+      continue;
+    }
+
+    const mp4s = fs
+      .readdirSync(tripletsDir, { withFileTypes: true })
+      .filter((ent) => ent.isFile() && ent.name.toLowerCase().endsWith('.mp4'))
+      .map((ent) => ent.name)
+      .sort((a, b) => a.localeCompare(b));
+
+    for (const fileName of mp4s) {
+      const absPath = path.join(tripletsDir, fileName);
+      const relPath = relFromOut(absPath);
+      const meta = parseTripletMetaFromFilename(fileName);
       trials.push({
-        trialId: `${base.videoId}__v${base.variantIndex}__unet_vs_${cmp.opponentModel}`,
-        baseVideoId: base.videoId,
-        gtVideo: base.gtRel,
-        unetVideo: base.unetRel,
-        opponentModel: cmp.opponentModel,
-        opponentVideo: cmp.opponentRel,
-        leftSource: unetOnLeft ? 'unet' : cmp.opponentModel,
-        rightSource: unetOnLeft ? cmp.opponentModel : 'unet',
-        leftVideo: unetOnLeft ? base.unetRel : cmp.opponentRel,
-        rightVideo: unetOnLeft ? cmp.opponentRel : base.unetRel,
+        trialId: fileName.replace(/\.mp4$/i, ''),
+        baseVideoId,
+        videoPath: relPath,
+        unetLabel: meta.unetLabel,
+        unetColor: meta.unetColor,
+        compareLabel: meta.compareLabel,
+        compareColor: meta.compareColor,
       });
     }
+  }
+
+  if (trials.length === 0) {
+    throw new Error(`No triplet videos found under ${OUT_ROOT}/*/triplets/*.mp4`);
   }
 
   shuffleInPlace(trials);
@@ -241,13 +194,10 @@ function buildTrialsFromOut() {
     trial.trialIndex = idx;
   });
 
-  return {
-    trials,
-    baseCount: baseEight.length,
-  };
+  return trials;
 }
 
-function buildOutVideoUrl(relPath) {
+function buildVideoUrl(relPath) {
   return `/video/${relPath.split(/[\\/]/).map((part) => encodeURIComponent(part)).join('/')}`;
 }
 
@@ -257,11 +207,7 @@ function buildTrialResponse(session, trial) {
     totalTrials: session.trials.length,
     trialId: trial.trialId,
     baseVideoId: trial.baseVideoId,
-    gtUrl: buildOutVideoUrl(trial.gtVideo),
-    leftUrl: buildOutVideoUrl(trial.leftVideo),
-    rightUrl: buildOutVideoUrl(trial.rightVideo),
-    leftSource: trial.leftSource,
-    rightSource: trial.rightSource,
+    videoUrl: buildVideoUrl(trial.videoPath),
   };
 }
 
@@ -350,46 +296,29 @@ async function handleApi(req, res, pathname) {
         return;
       }
 
-      const prepared = buildTrialsFromOut();
+      const trials = discoverTripletTrials();
 
       const sessionId = crypto.randomUUID();
       const timestamp = nowTimestampForFile();
       const logFile = path.resolve(LOGS_ROOT, `${cleanUserId}_${timestamp}.csv`);
 
-      appendCsvLine(logFile, [
-        'session_id',
-        'user_id',
-        'trial_index',
-        'trial_id',
-        'base_video_id',
-        'gt_video',
-        'unet_video',
-        'opponent_model',
-        'opponent_video',
-        'left_source',
-        'right_source',
-        'left_video',
-        'right_video',
-        'choice',
-        'chosen_source',
-        'rt_ms',
-        'answered_at_iso',
-      ]);
+      appendCsvLine(logFile, LOG_HEADER);
 
       sessions.set(sessionId, {
         sessionId,
         userId: cleanUserId,
         logFile,
-        trials: prepared.trials,
+        trials,
         nextTrialCursor: 0,
         answeredTrials: new Set(),
+        responses: new Map(),
+        lastAnsweredTrialIndex: null,
         completed: false,
       });
 
       sendJson(res, 200, {
         sessionId,
-        totalTrials: prepared.trials.length,
-        baseVideosUsed: prepared.baseCount,
+        totalTrials: trials.length,
       });
       return;
     } catch (err) {
@@ -439,17 +368,20 @@ async function handleApi(req, res, pathname) {
 
     try {
       const body = await readRequestBodyJson(req);
-      const { trialId, choice, rtMs } = body;
+      const { trialId, choiceColor, rtMs } = body;
       const activeTrial = session.trials[session.nextTrialCursor];
 
       if (trialId !== activeTrial.trialId) {
         sendJson(res, 400, { error: `trialId mismatch. Expected ${activeTrial.trialId}` });
         return;
       }
-      if (choice !== 1 && choice !== 2) {
-        sendJson(res, 400, { error: 'choice must be 1 or 2' });
+
+      const normalizedChoice = String(choiceColor || '').trim().toLowerCase();
+      if (normalizedChoice !== 'cyan' && normalizedChoice !== 'red') {
+        sendJson(res, 400, { error: 'choiceColor must be "cyan" or "red"' });
         return;
       }
+
       if (!Number.isFinite(rtMs) || rtMs < 0) {
         sendJson(res, 400, { error: 'rtMs must be a non-negative number' });
         return;
@@ -461,34 +393,34 @@ async function handleApi(req, res, pathname) {
         return;
       }
 
-      const chosenSource = choice === 1 ? activeTrial.leftSource : activeTrial.rightSource;
       const answeredAtIso = new Date().toISOString();
 
-      appendCsvLine(session.logFile, [
-        session.sessionId,
-        session.userId,
-        activeTrial.trialIndex,
-        activeTrial.trialId,
-        activeTrial.baseVideoId,
-        activeTrial.gtVideo,
-        activeTrial.unetVideo,
-        activeTrial.opponentModel,
-        activeTrial.opponentVideo,
-        activeTrial.leftSource,
-        activeTrial.rightSource,
-        activeTrial.leftVideo,
-        activeTrial.rightVideo,
-        choice,
-        chosenSource,
-        Math.round(rtMs),
-        answeredAtIso,
-      ]);
+      session.responses.set(activeTrial.trialIndex, {
+        session_id: session.sessionId,
+        user_id: session.userId,
+        trial_index: activeTrial.trialIndex,
+        trial_id: activeTrial.trialId,
+        base_video_id: activeTrial.baseVideoId,
+        video_path: activeTrial.videoPath,
+        unet_label: activeTrial.unetLabel,
+        unet_color: activeTrial.unetColor,
+        compare_label: activeTrial.compareLabel,
+        compare_color: activeTrial.compareColor,
+        choice_color: normalizedChoice,
+        rt_ms: Math.round(rtMs),
+        answered_at_iso: answeredAtIso,
+      });
+      rewriteSessionLogFile(session);
 
       session.answeredTrials.add(dedupeKey);
       session.nextTrialCursor += 1;
+      session.lastAnsweredTrialIndex = activeTrial.trialIndex;
 
       sendJson(res, 200, {
         ok: true,
+        trialIndex: activeTrial.trialIndex,
+        trialId: activeTrial.trialId,
+        choiceColor: normalizedChoice,
         nextTrialIndex: session.nextTrialCursor,
         remaining: session.trials.length - session.nextTrialCursor,
       });
@@ -500,6 +432,55 @@ async function handleApi(req, res, pathname) {
   }
 
   const completeMatch = pathname.match(/^\/api\/session\/([^/]+)\/complete$/);
+  const reviseMatch = pathname.match(/^\/api\/session\/([^/]+)\/revise$/);
+  if (req.method === 'POST' && reviseMatch) {
+    const sessionId = reviseMatch[1];
+    const session = sessions.get(sessionId);
+    if (!session) {
+      sendJson(res, 404, { error: 'Session not found' });
+      return;
+    }
+    if (session.completed) {
+      sendJson(res, 400, { error: 'Session is already completed' });
+      return;
+    }
+    if (session.lastAnsweredTrialIndex === null) {
+      sendJson(res, 400, { error: 'No submitted trial to revise yet' });
+      return;
+    }
+
+    try {
+      const body = await readRequestBodyJson(req);
+      const { choiceColor } = body;
+      const normalizedChoice = String(choiceColor || '').trim().toLowerCase();
+      if (normalizedChoice !== 'cyan' && normalizedChoice !== 'red') {
+        sendJson(res, 400, { error: 'choiceColor must be "cyan" or "red"' });
+        return;
+      }
+
+      const row = session.responses.get(session.lastAnsweredTrialIndex);
+      if (!row) {
+        sendJson(res, 400, { error: 'Last submitted trial response not found' });
+        return;
+      }
+
+      row.choice_color = normalizedChoice;
+      row.answered_at_iso = new Date().toISOString();
+      rewriteSessionLogFile(session);
+
+      sendJson(res, 200, {
+        ok: true,
+        trialIndex: row.trial_index,
+        trialId: row.trial_id,
+        choiceColor: row.choice_color,
+      });
+      return;
+    } catch (err) {
+      sendJson(res, 400, { error: err.message || 'Failed to revise answer' });
+      return;
+    }
+  }
+
   if (req.method === 'POST' && completeMatch) {
     const sessionId = completeMatch[1];
     const session = sessions.get(sessionId);
@@ -615,7 +596,7 @@ const server = http.createServer(async (req, res) => {
 if (require.main === module) {
   server.listen(PORT, () => {
     console.log(`2AFC app running on http://localhost:${PORT}`);
-    console.log(`Out root: ${OUT_ROOT}`);
+    console.log(`Video root: ${OUT_ROOT}`);
     console.log(`Logs root: ${LOGS_ROOT}`);
   });
 }

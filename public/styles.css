@@ -21,7 +21,7 @@ body {
 }
 
 .app {
-  max-width: 1200px;
+  max-width: 1100px;
   margin: 0 auto;
   padding: 20px;
 }
@@ -82,31 +82,49 @@ button:disabled {
   color: var(--muted);
 }
 
-.video-label {
-  font-size: 14px;
-  color: #2c2f33;
-  margin-bottom: 6px;
-}
-
-.gt-wrap video {
+.single-video-wrap video {
   width: 100%;
-  max-height: 36vh;
+  max-height: 70vh;
   background: #000;
   border-radius: 8px;
 }
 
-.comparison-grid {
+.choice-buttons {
   margin-top: 12px;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
+  display: flex;
+  gap: 10px;
 }
 
-.video-cell video {
-  width: 100%;
-  max-height: 30vh;
-  background: #000;
-  border-radius: 8px;
+.btn-cyan {
+  background: #0ea5b5;
+}
+
+.btn-red {
+  background: #cf3e3e;
+}
+
+.btn-submit {
+  background: #374151;
+}
+
+.choice-preview {
+  margin-top: 8px;
+  font-size: 16px;
+}
+
+.choice-preview--cyan {
+  color: #0ea5b5;
+  font-weight: 700;
+}
+
+.choice-preview--red {
+  color: #cf3e3e;
+  font-weight: 700;
+}
+
+.btn-selected {
+  outline: 3px solid rgba(0, 0, 0, 0.35);
+  outline-offset: 1px;
 }
 
 .overlay {
@@ -122,6 +140,18 @@ button:disabled {
   font-size: 17px;
 }
 
+.saved-choice {
+  font-weight: 700;
+}
+
+.saved-choice--cyan {
+  color: #0ea5b5;
+}
+
+.saved-choice--red {
+  color: #cf3e3e;
+}
+
 .overlay button {
   margin-top: 10px;
 }
@@ -135,12 +165,11 @@ button:disabled {
 }
 
 @media (max-width: 900px) {
-  .comparison-grid {
-    grid-template-columns: 1fr;
+  .single-video-wrap video {
+    max-height: 45vh;
   }
 
-  .gt-wrap video,
-  .video-cell video {
-    max-height: 40vh;
+  .choice-buttons {
+    flex-direction: column;
   }
 }

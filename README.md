@@ -1,31 +1,27 @@
-# 2AFC Video Study App
+# Color Choice Video Study
 
-Local JavaScript app for running 2AFC user studies with simultaneous playback:
-- GT reference on top
-- Two model outputs below (left/right)
-- Participant chooses preference with `1` (left) or `2` (right)
+Local JavaScript app for running a single-video study:
+- One video plays per trial
+- After video ends, participant selects `cyan` or `red`
+- Choice is logged per user/session
 
-## Current Trial Logic
-- Video source root: `out/` (or `STUDY_VIDEO_ROOT`)
-- A valid base video must contain:
-  - base-level `gt_*.mp4` (preferred GT location)
-  - `tpp*` prediction `.mp4`
-  - `diffeye*` prediction `.mp4`
-  - `unet*` prediction `.mp4`
-- Backward compatibility: if base GT is missing, GT falls back to `tpp*/gt_only/*.mp4` or `unet*/gt_only/*.mp4`.
-- The app builds trials as:
-  - 8 base videos
-  - 2 comparisons each (`unet vs tpp`, `unet vs diffeye`)
-  - Total: **16 trials**
-- Left/right position is randomized per trial.
-- Videos are served directly from `out/` as MP4 sources.
+## Video Root and Layout
+Default video root is `out_triplets/`.
+
+Expected structure:
+- `out_triplets/<base_video_id>/triplets/*.mp4`
+
+Example:
+- `out_triplets/125/triplets/tri_000_..._cyan__c_..._red.mp4`
+
+Override root with env var:
+```bash
+STUDY_VIDEO_ROOT=out_h264 npm start
+```
 
 ## Start Inputs
 - `User ID` is required.
-- Trials are always auto-discovered from `out/`.
-
-## Install
-No external dependencies are required.
+- Trials are auto-discovered from `<video_root>/*/triplets/*.mp4`.
 
 ## Run
 ```bash
@@ -33,25 +29,18 @@ npm start
 ```
 Open `http://localhost:3000`.
 
-## Fast Offline Conversion (Recommended)
-If browser cannot play your `out/*.mp4` (codec `mp4v`), convert once to H.264:
-
-```bash
-python3 scripts/convert_out_to_h264.py --input-root out --output-root out_h264 --workers 8
-```
-
-Then run the app against converted videos:
-
-```bash
-STUDY_VIDEO_ROOT=out_h264 npm start
-```
+## Study Controls
+- After each video ends, choose color:
+  - `C` key or "Choose Cyan" button
+  - `R` key or "Choose Red" button
+- Press `Space` to continue to the next trial after saving.
 
 ## API
 - `POST /api/session/start`
   - Body: `{ "userId": "P001" }`
 - `GET /api/session/:sessionId/next`
 - `POST /api/session/:sessionId/answer`
-  - Body: `{ "trialId": "...", "choice": 1, "rtMs": 1234 }`
+  - Body: `{ "trialId": "...", "choiceColor": "cyan", "rtMs": 1234 }`
 - `POST /api/session/:sessionId/complete`
 
 ## Log Format
@@ -63,16 +52,11 @@ Columns:
 - `trial_index`
 - `trial_id`
 - `base_video_id`
-- `gt_video`
-- `unet_video`
-- `opponent_model`
-- `opponent_video`
-- `left_source`
-- `right_source`
-- `left_video`
-- `right_video`
-- `choice`
-- `chosen_source`
+- `video_path`
+- `unet_label`
+- `unet_color`
+- `compare_label`
+- `compare_color`
+- `choice_color`
 - `rt_ms`
 - `answered_at_iso`
-# scanpath_2afc

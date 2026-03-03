@@ -3,12 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>2AFC Video Study</title>
+    <title>Color Choice Study</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <main class="app">
-      <h1>2AFC Video Study</h1>
+      <h1>Color Choice Study</h1>
 
       <section id="start-screen" class="panel visible">
         <h2>Start Session</h2>
@@ -17,40 +17,29 @@
           <input id="user-id-input" type="text" placeholder="e.g. P001" />
         </label>
         <button id="start-button">Start</button>
-        <p class="hint">Each trial plays 3 videos at once: GT on top, then two model outputs below. Choose with key 1 (left) or 2 (right).</p>
+        <p class="hint">Each trial plays one video. After it ends, choose <strong>Cyan</strong> or <strong>Red</strong>.</p>
       </section>
 
       <section id="study-screen" class="panel hidden">
         <div id="status-line"></div>
 
-        <div class="gt-wrap">
-          <div class="video-label">GT (Reference)</div>
-          <video id="gt-video" playsinline muted>
-            <source id="gt-source" src="" type="video/mp4" />
+        <div class="single-video-wrap">
+          <video id="trial-video" playsinline muted>
+            <source id="trial-source" src="" type="video/mp4" />
             Your browser does not support the video tag.
           </video>
         </div>
 
-        <div class="comparison-grid">
-          <div class="video-cell">
-            <div id="left-label" class="video-label">Video 1 (Left)</div>
-            <video id="left-video" playsinline muted>
-              <source id="left-source" src="" type="video/mp4" />
-              Your browser does not support the video tag.
-            </video>
-          </div>
-          <div class="video-cell">
-            <div id="right-label" class="video-label">Video 2 (Right)</div>
-            <video id="right-video" playsinline muted>
-              <source id="right-source" src="" type="video/mp4" />
-              Your browser does not support the video tag.
-            </video>
-          </div>
+        <div id="choice-buttons" class="choice-buttons hidden">
+          <button id="cyan-button" type="button" class="btn-cyan">Choose Cyan (C)</button>
+          <button id="red-button" type="button" class="btn-red">Choose Red (R)</button>
+          <button id="submit-choice-button" type="button" class="btn-submit" disabled>Submit Choice (Enter)</button>
         </div>
+        <p id="choice-preview" class="choice-preview hidden">My choice: none</p>
 
         <div id="overlay" class="overlay hidden">
           <p id="overlay-text"></p>
-          <button id="overlay-action" class="hidden" type="button">Play videos</button>
+          <button id="overlay-action" class="hidden" type="button">Play video</button>
         </div>
       </section>
 
